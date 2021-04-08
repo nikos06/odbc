@@ -9,7 +9,7 @@ package odbc
 import (
 	"database/sql"
 
-	"github.com/alexbrainman/odbc/api"
+	"github.com/nikos06/odbc/api"
 )
 
 var drv Driver
@@ -76,4 +76,5 @@ func init() {
 		drv.initErr = err
 	}
 	sql.Register("odbc", &drv)
+	sql.Register("odbc2", &drv)
 }

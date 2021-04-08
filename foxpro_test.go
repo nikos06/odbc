@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/alexbrainman/odbc"
+	_ "github.com/nikos06/odbc"
 )
 
 var (
