@@ -35,6 +35,7 @@ func (l *BufferLen) Bind(h api.SQLHSTMT, idx int, ctype api.SQLSMALLINT, buf []b
 // Column provides access to row columns.
 type Column interface {
 	Name() string
+	Type() string
 	Bind(h api.SQLHSTMT, idx int) (bool, error)
 	Value(h api.SQLHSTMT, idx int) (driver.Value, error)
 }
@@ -119,6 +120,75 @@ type BaseColumn struct {
 
 func (c *BaseColumn) Name() string {
 	return c.name
+}
+
+// makes go/sql type name as described below
+// RowsColumnTypeDatabaseTypeName may be implemented by Rows. It should return the
+// database system type name without the length. Type names should be uppercase.
+// Examples of returned types: "VARCHAR", "NVARCHAR", "VARCHAR2", "CHAR", "TEXT",
+// "DECIMAL", "SMALLINT", "INT", "BIGINT", "BOOL", "[]BIGINT", "JSONB", "XML",
+// "TIMESTAMP".
+func (c *BaseColumn) Type() string {
+	switch c.CType {
+	case api.SQL_TINYINT:
+		return "TINYINT"
+	case api.SQL_SMALLINT:
+		return "SMALLINT"
+	case api.SQL_INTEGER:
+		return "INTEGER"
+	case api.SQL_BIGINT:
+		return "BIGINT"
+	case api.SQL_REAL:
+		return "REAL"
+	case api.SQL_FLOAT:
+		return "FLOAT"
+	case api.SQL_VARBINARY:
+		return "VARBINARY"
+	case api.SQL_VARCHAR:
+		return "VARCHAR"
+	case api.SQL_WVARCHAR:
+		return "NVARCHAR"
+	case api.SQL_BIT:
+		return "BIT"
+	case api.SQL_DECIMAL:
+		return "DECIMAL"
+	case api.SQL_DATETIME:
+		return "DATETIME"
+	case api.SQL_TIME:
+		return "TIME"
+	case api.SQL_CHAR:
+		return "CHAR"
+	case api.SQL_WCHAR:
+		return "NVARCHAR"
+	case api.SQL_GUID:
+		return "UNIQUEIDENTIFIER"
+	case api.SQL_SS_XML:
+		return "XML"
+	case api.SQL_BINARY:
+		return "BINARY"
+	case api.SQL_NUMERIC:
+		return "NUMERIC"
+	case api.SQL_DOUBLE:
+		return "DOUBLE"
+	case api.SQL_TYPE_DATE:
+		return "DATE"
+	case api.SQL_TYPE_TIME:
+		return "TIME"
+	case -25:
+		return "TIMESTAMP"
+	case api.SQL_TYPE_TIMESTAMP:
+		return "TIMESTAMP"
+	case api.SQL_TIMESTAMP:
+		return "TIMESTAMP"
+	case api.SQL_LONGVARCHAR:
+		return "LONGVARCHAR"
+	case api.SQL_LONGVARBINARY:
+		return "VARBINARY"
+	case api.SQL_WLONGVARCHAR:
+		return "NVARCHAR"
+	default:
+		return ""
+	}
 }
 
 func (c *BaseColumn) Value(buf []byte) (driver.Value, error) {

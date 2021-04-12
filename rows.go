@@ -64,3 +64,12 @@ func (r *Rows) NextResultSet() error {
 	}
 	return nil
 }
+
+// RowsColumnTypeDatabaseTypeName may be implemented by Rows. It should return the
+// database system type name without the length. Type names should be uppercase.
+// Examples of returned types: "VARCHAR", "NVARCHAR", "VARCHAR2", "CHAR", "TEXT",
+// "DECIMAL", "SMALLINT", "INT", "BIGINT", "BOOL", "[]BIGINT", "JSONB", "XML",
+// "TIMESTAMP".
+func (r *Rows) ColumnTypeDatabaseTypeName(index int) string {
+	return r.os.Cols[index].Type()
+}
