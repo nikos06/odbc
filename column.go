@@ -122,14 +122,36 @@ func (c *BaseColumn) Name() string {
 	return c.name
 }
 
-// makes go/sql type name as described below
+// Type : makes go/sql type name as described below
 // RowsColumnTypeDatabaseTypeName may be implemented by Rows. It should return the
 // database system type name without the length. Type names should be uppercase.
-// Examples of returned types: "VARCHAR", "NVARCHAR", "VARCHAR2", "CHAR", "TEXT",
-// "DECIMAL", "SMALLINT", "INT", "BIGINT", "BOOL", "[]BIGINT", "JSONB", "XML",
-// "TIMESTAMP".
+// Examples of returned types: "VARCHAR", "NVARCHAR", "CHAR", "TEXT",
+// "DECIMAL", "SMALLINT", "INT", "BIGINT", "XML", "TIMESTAMP".
 func (c *BaseColumn) Type() string {
 	switch c.CType {
+	// CHAR
+	case api.SQL_CHAR:
+		return "CHAR"
+	case api.SQL_WCHAR:
+		return "NVARCHAR" // NCHAR does not seem to reflect effective type
+	case api.SQL_VARCHAR:
+		return "VARCHAR"
+	case api.SQL_WVARCHAR:
+		return "NVARCHAR"
+	case api.SQL_LONGVARCHAR:
+		return "TEXT"
+	case api.SQL_WLONGVARCHAR:
+		return "NTEXT"
+	// BINARY
+	case api.SQL_BINARY:
+		return "BINARY"
+	case api.SQL_VARBINARY:
+		return "VARBINARY"
+	case api.SQL_LONGVARBINARY:
+		return "VARBINARY"
+	// NUMERIC FIXED LENGTH
+	case api.SQL_BIT:
+		return "BIT"
 	case api.SQL_TINYINT:
 		return "TINYINT"
 	case api.SQL_SMALLINT:
@@ -138,54 +160,38 @@ func (c *BaseColumn) Type() string {
 		return "INTEGER"
 	case api.SQL_BIGINT:
 		return "BIGINT"
+	case api.SQL_NUMERIC:
+		return "NUMERIC"
+	case api.SQL_DECIMAL:
+		return "DECIMAL"
+	case -25: // not declared in sql.h nor in sqlext.h
+		return "INTEGER"
+	// NUMERIC NOT FIXED LENGTH
 	case api.SQL_REAL:
 		return "REAL"
 	case api.SQL_FLOAT:
 		return "FLOAT"
-	case api.SQL_VARBINARY:
-		return "VARBINARY"
-	case api.SQL_VARCHAR:
-		return "VARCHAR"
-	case api.SQL_WVARCHAR:
-		return "NVARCHAR"
-	case api.SQL_BIT:
-		return "BIT"
-	case api.SQL_DECIMAL:
-		return "DECIMAL"
+	case api.SQL_DOUBLE:
+		return "DOUBLE"
+	// DATE / TIME
+	case api.SQL_TYPE_DATE:
+		return "DATE"
 	case api.SQL_DATETIME:
 		return "DATETIME"
 	case api.SQL_TIME:
 		return "TIME"
-	case api.SQL_CHAR:
-		return "CHAR"
-	case api.SQL_WCHAR:
-		return "NVARCHAR"
-	case api.SQL_GUID:
-		return "UNIQUEIDENTIFIER"
-	case api.SQL_SS_XML:
-		return "XML"
-	case api.SQL_BINARY:
-		return "BINARY"
-	case api.SQL_NUMERIC:
-		return "NUMERIC"
-	case api.SQL_DOUBLE:
-		return "DOUBLE"
-	case api.SQL_TYPE_DATE:
-		return "DATE"
 	case api.SQL_TYPE_TIME:
 		return "TIME"
-	case -25:
-		return "TIMESTAMP"
 	case api.SQL_TYPE_TIMESTAMP:
 		return "TIMESTAMP"
 	case api.SQL_TIMESTAMP:
 		return "TIMESTAMP"
-	case api.SQL_LONGVARCHAR:
-		return "LONGVARCHAR"
-	case api.SQL_LONGVARBINARY:
-		return "VARBINARY"
-	case api.SQL_WLONGVARCHAR:
-		return "NVARCHAR"
+	// GUID
+	case api.SQL_GUID:
+		return "UNIQUEIDENTIFIER"
+	// XML
+	case api.SQL_SS_XML:
+		return "TEXT" // XML ?
 	default:
 		return ""
 	}
