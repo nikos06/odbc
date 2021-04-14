@@ -8,6 +8,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -35,29 +36,33 @@ func (l *BufferLen) Bind(h api.SQLHSTMT, idx int, ctype api.SQLSMALLINT, buf []b
 // Column provides access to row columns.
 type Column interface {
 	Name() string
-	Type() string
 	Bind(h api.SQLHSTMT, idx int) (bool, error)
 	Value(h api.SQLHSTMT, idx int) (driver.Value, error)
+	// new interface functions
+	Type() string
+	Length() (int64, bool)
+	Nullable() (bool, bool)
+	ScanType() reflect.Type
 }
 
-func describeColumn(h api.SQLHSTMT, idx int, namebuf []uint16) (namelen int, sqltype api.SQLSMALLINT, size api.SQLULEN, ret api.SQLRETURN) {
-	var l, decimal, nullable api.SQLSMALLINT
+func describeColumn(h api.SQLHSTMT, idx int, namebuf []uint16) (namelen int, sqltype api.SQLSMALLINT, size api.SQLULEN, nullable api.SQLSMALLINT, ret api.SQLRETURN) {
+	var l, decimal api.SQLSMALLINT
 	ret = api.SQLDescribeCol(h, api.SQLUSMALLINT(idx+1),
 		(*api.SQLWCHAR)(unsafe.Pointer(&namebuf[0])),
 		api.SQLSMALLINT(len(namebuf)), &l,
 		&sqltype, &size, &decimal, &nullable)
-	return int(l), sqltype, size, ret
+	return int(l), sqltype, size, nullable, ret
 }
 
 // TODO(brainman): did not check for MS SQL timestamp
 
 func NewColumn(h api.SQLHSTMT, idx int) (Column, error) {
 	namebuf := make([]uint16, 150)
-	namelen, sqltype, size, ret := describeColumn(h, idx, namebuf)
+	namelen, sqltype, size, nullable, ret := describeColumn(h, idx, namebuf)
 	if ret == api.SQL_SUCCESS_WITH_INFO && namelen > len(namebuf) {
 		// try again with bigger buffer
 		namebuf = make([]uint16, namelen)
-		namelen, sqltype, size, ret = describeColumn(h, idx, namebuf)
+		namelen, sqltype, size, nullable, ret = describeColumn(h, idx, namebuf)
 	}
 	if IsError(ret) {
 		return nil, NewError("SQLDescribeCol", h)
@@ -67,8 +72,10 @@ func NewColumn(h api.SQLHSTMT, idx int) (Column, error) {
 		return nil, errors.New("Failed to allocate column name buffer")
 	}
 	b := &BaseColumn{
-		name:    api.UTF16ToString(namebuf[:namelen]),
-		SQLType: sqltype,
+		name:     api.UTF16ToString(namebuf[:namelen]),
+		size:     size,
+		nullable: nullable,
+		SQLType:  sqltype,
 	}
 	switch sqltype {
 	case api.SQL_BIT:
@@ -113,88 +120,15 @@ func NewColumn(h api.SQLHSTMT, idx int) (Column, error) {
 
 // BaseColumn implements common column functionality.
 type BaseColumn struct {
-	name    string
-	SQLType api.SQLSMALLINT
-	CType   api.SQLSMALLINT
+	name     string
+	size     api.SQLULEN
+	nullable api.SQLSMALLINT
+	SQLType  api.SQLSMALLINT
+	CType    api.SQLSMALLINT
 }
 
 func (c *BaseColumn) Name() string {
 	return c.name
-}
-
-// Type : makes go/sql type name as described below
-// RowsColumnTypeDatabaseTypeName may be implemented by Rows. It should return the
-// database system type name without the length. Type names should be uppercase.
-// Examples of returned types: "VARCHAR", "NVARCHAR", "CHAR", "TEXT",
-// "DECIMAL", "SMALLINT", "INT", "BIGINT", "XML", "TIMESTAMP".
-func (c *BaseColumn) Type() string {
-	switch c.CType {
-	// CHAR
-	case api.SQL_CHAR:
-		return "CHAR"
-	case api.SQL_WCHAR:
-		return "NVARCHAR" // NCHAR does not seem to reflect effective type
-	case api.SQL_VARCHAR:
-		return "VARCHAR"
-	case api.SQL_WVARCHAR:
-		return "NVARCHAR"
-	case api.SQL_LONGVARCHAR:
-		return "TEXT"
-	case api.SQL_WLONGVARCHAR:
-		return "NTEXT"
-	// BINARY
-	case api.SQL_BINARY:
-		return "BINARY"
-	case api.SQL_VARBINARY:
-		return "VARBINARY"
-	case api.SQL_LONGVARBINARY:
-		return "VARBINARY"
-	// NUMERIC FIXED LENGTH
-	case api.SQL_BIT:
-		return "BIT"
-	case api.SQL_TINYINT:
-		return "TINYINT"
-	case api.SQL_SMALLINT:
-		return "SMALLINT"
-	case api.SQL_INTEGER:
-		return "INTEGER"
-	case api.SQL_BIGINT:
-		return "BIGINT"
-	case api.SQL_NUMERIC:
-		return "NUMERIC"
-	case api.SQL_DECIMAL:
-		return "DECIMAL"
-	case -25: // not declared in sql.h nor in sqlext.h
-		return "INTEGER"
-	// NUMERIC NOT FIXED LENGTH
-	case api.SQL_REAL:
-		return "REAL"
-	case api.SQL_FLOAT:
-		return "FLOAT"
-	case api.SQL_DOUBLE:
-		return "DOUBLE"
-	// DATE / TIME
-	case api.SQL_TYPE_DATE:
-		return "DATE"
-	case api.SQL_DATETIME:
-		return "DATETIME"
-	case api.SQL_TIME:
-		return "TIME"
-	case api.SQL_TYPE_TIME:
-		return "TIME"
-	case api.SQL_TYPE_TIMESTAMP:
-		return "TIMESTAMP"
-	case api.SQL_TIMESTAMP:
-		return "TIMESTAMP"
-	// GUID
-	case api.SQL_GUID:
-		return "UNIQUEIDENTIFIER"
-	// XML
-	case api.SQL_SS_XML:
-		return "TEXT" // XML ?
-	default:
-		return ""
-	}
 }
 
 func (c *BaseColumn) Value(buf []byte) (driver.Value, error) {
@@ -258,6 +192,233 @@ func (c *BaseColumn) Value(buf []byte) (driver.Value, error) {
 		return buf, nil
 	}
 	return nil, fmt.Errorf("unsupported column ctype %d", c.CType)
+}
+
+// Type : makes go/sql type name as described below
+// RowsColumnTypeDatabaseTypeName may be implemented by Rows. It should return the
+// database system type name without the length. Type names should be uppercase.
+// Examples of returned types: "VARCHAR", "NVARCHAR", "CHAR", "TEXT",
+// "DECIMAL", "SMALLINT", "INT", "BIGINT", "XML", "TIMESTAMP".
+func (c *BaseColumn) Type() string {
+	switch c.SQLType {
+	// CHAR
+	case api.SQL_CHAR:
+		return "CHAR"
+	case api.SQL_WCHAR:
+		return "NVARCHAR" // NCHAR does not seem to reflect effective type
+	case api.SQL_VARCHAR:
+		return "VARCHAR"
+	case api.SQL_WVARCHAR:
+		return "NVARCHAR"
+	case api.SQL_LONGVARCHAR:
+		return "TEXT"
+	case api.SQL_WLONGVARCHAR:
+		return "NTEXT"
+	// XML
+	case api.SQL_SS_XML:
+		return "NTEXT"
+	// BINARY
+	case api.SQL_BINARY:
+		return "BINARY"
+	case api.SQL_VARBINARY:
+		return "VARBINARY"
+	case api.SQL_LONGVARBINARY:
+		return "VARBINARY"
+	// NUMERIC FIXED LENGTH
+	case api.SQL_BIT:
+		return "BIT"
+	case api.SQL_TINYINT:
+		return "TINYINT"
+	case api.SQL_SMALLINT:
+		return "SMALLINT"
+	case api.SQL_INTEGER:
+		return "INTEGER"
+	case api.SQL_BIGINT:
+		return "BIGINT"
+	case api.SQL_NUMERIC:
+		return "NUMERIC"
+	case api.SQL_DECIMAL:
+		return "DECIMAL"
+	case -25: // not declared in sql.h nor in sqlext.h
+		return "INTEGER"
+	// NUMERIC NOT FIXED LENGTH
+	case api.SQL_REAL:
+		return "REAL"
+	case api.SQL_FLOAT:
+		return "FLOAT"
+	case api.SQL_DOUBLE:
+		return "DOUBLE"
+	// DATE / TIME
+	case api.SQL_TYPE_DATE:
+		return "DATE"
+	case api.SQL_TYPE_TIME:
+		return "TIME"
+	case api.SQL_SS_TIME2:
+		return "TIME2"
+	case api.SQL_TYPE_TIMESTAMP:
+		return "TIMESTAMP"
+	// GUID
+	case api.SQL_GUID:
+		return "UNIQUEIDENTIFIER"
+	default:
+		panic(fmt.Sprintf("not implemented Type() for type %v", c.CType))
+	}
+}
+
+// makes go/sql type length as described below
+// It should return the length
+// of the column type if the column is a variable length type. If the column is
+// not a variable length type ok should return false.
+// If length is not limited other than system limits, it should return math.MaxInt64.
+// The following are examples of returned values for various types:
+//   TEXT          (math.MaxInt64, true)
+//   varchar(10)   (10, true)
+//   nvarchar(10)  (10, true)
+//   decimal       (0, false)
+//   int           (0, false)
+//   bytea(30)     (30, true)
+func (c *BaseColumn) Length() (int64, bool) {
+	switch c.SQLType {
+	// CHAR
+	case api.SQL_CHAR:
+		return int64(c.size), true
+	case api.SQL_WCHAR:
+		return int64(c.size), true
+	case api.SQL_VARCHAR:
+		return int64(c.size), true
+	case api.SQL_WVARCHAR:
+		return int64(c.size), true
+	case api.SQL_LONGVARCHAR:
+		return 2147483647, true
+	case api.SQL_WLONGVARCHAR:
+		return 1073741823, true
+	// BINARY
+	case api.SQL_BINARY:
+		return int64(c.size), true
+	case api.SQL_VARBINARY:
+		return int64(c.size), true
+	case api.SQL_LONGVARBINARY:
+		return int64(c.size), true
+	// NUMERIC FIXED LENGTH
+	case api.SQL_BIT:
+		return 0, false
+	case api.SQL_TINYINT:
+		return 0, false
+	case api.SQL_SMALLINT:
+		return 0, false
+	case api.SQL_INTEGER:
+		return 0, false
+	case api.SQL_BIGINT:
+		return 0, false
+	case api.SQL_NUMERIC:
+		return 0, false
+	case api.SQL_DECIMAL:
+		return 0, false
+	case -25: // not declared in sql.h nor in sqlext.h
+		return 0, false
+	// NUMERIC NOT FIXED LENGTH
+	case api.SQL_REAL:
+		return 0, false
+	case api.SQL_FLOAT:
+		return 0, false
+	case api.SQL_DOUBLE:
+		return 0, false
+	// DATE / TIME
+	case api.SQL_TYPE_DATE:
+		return 0, false
+	case api.SQL_TYPE_TIME:
+		return 0, false
+	case api.SQL_SS_TIME2:
+		return 0, false
+	case api.SQL_TYPE_TIMESTAMP:
+		return 0, false
+	// GUID
+	case api.SQL_GUID:
+		return 0, false
+	// XML
+	case api.SQL_SS_XML:
+		return 1073741822, true
+	default:
+		panic(fmt.Sprintf("not implemented Length() for type %v", c.CType))
+	}
+}
+
+// The nullable value should
+// be true if it is known the column may be null, or false if the column is known
+// to be not nullable.
+// If the column nullability is unknown, ok should be false.
+func (c *BaseColumn) Nullable() (bool, bool) {
+	return c.nullable == 1, true
+}
+
+// makes go/sql type instance as described below
+// It should return
+// the value type that can be used to scan types into. For example, the database
+// column type "bigint" this should return "reflect.TypeOf(int64(0))".
+func (c *BaseColumn)  ScanType() reflect.Type {
+	switch c.SQLType {
+	// CHAR
+	case api.SQL_CHAR:
+		return reflect.TypeOf("")
+	case api.SQL_WCHAR:
+		return reflect.TypeOf("")
+	case api.SQL_VARCHAR:
+		return reflect.TypeOf("")
+	case api.SQL_WVARCHAR:
+		return reflect.TypeOf("")
+	case api.SQL_LONGVARCHAR:
+		return reflect.TypeOf("")
+	case api.SQL_WLONGVARCHAR:
+		return reflect.TypeOf("")
+	// XML
+	case api.SQL_SS_XML:
+		return reflect.TypeOf("")
+	// BINARY
+	case api.SQL_BINARY:
+		return reflect.TypeOf([]byte{})
+	case api.SQL_VARBINARY:
+		return reflect.TypeOf([]byte{})
+	case api.SQL_LONGVARBINARY:
+		return reflect.TypeOf([]byte{})
+	// NUMERIC FIXED LENGTH
+	case api.SQL_BIT:
+		return reflect.TypeOf(int64(0))
+	case api.SQL_TINYINT:
+		return reflect.TypeOf(int64(0))
+	case api.SQL_SMALLINT:
+		return reflect.TypeOf(int64(0))
+	case api.SQL_INTEGER:
+		return reflect.TypeOf(int64(0))
+	case api.SQL_BIGINT:
+		return reflect.TypeOf(int64(0))
+	case api.SQL_NUMERIC:
+		return reflect.TypeOf([]byte{})
+	case api.SQL_DECIMAL:
+		return reflect.TypeOf([]byte{})
+	case -25: // not declared in sql.h nor in sqlext.h
+		return reflect.TypeOf(int64(0))
+	// NUMERIC NOT FIXED LENGTH
+	case api.SQL_REAL:
+		return reflect.TypeOf(float64(0))
+	case api.SQL_FLOAT:
+		return reflect.TypeOf(float64(0))
+	case api.SQL_DOUBLE:
+		return reflect.TypeOf(float64(0))
+	// DATE / TIME
+	case api.SQL_TYPE_DATE:
+		return reflect.TypeOf(time.Time{})
+	case api.SQL_TYPE_TIME:
+		return reflect.TypeOf(time.Time{})
+	case api.SQL_SS_TIME2:
+		return reflect.TypeOf(time.Time{})
+	case api.SQL_TYPE_TIMESTAMP:
+		return reflect.TypeOf(time.Time{})
+	// GUID
+	case api.SQL_GUID:
+		return reflect.TypeOf([]byte{})
+	default:
+		panic(fmt.Sprintf("not implemented ScanType() for type %v", c.CType))
+	}
 }
 
 // BindableColumn allows access to columns that can have their buffers
